@@ -50,14 +50,24 @@ async def process_task(message: aio_pika.IncomingMessage):
             return
 
 
-async def consume_messages():
+async def consume_messages(max_retries: int = 10, base_delay: float = 1.0):
     logger.info('Worker starting up...')
-    connection = await aio_pika.connect_robust(
-        host=settings.RABBITMQ_HOST,
-        port=settings.RABBITMQ_PORT,
-        login=settings.RABBITMQ_USER,
-        password=settings.RABBITMQ_PASSWORD,
-    )
+    connection = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            connection = await aio_pika.connect_robust(
+                host=settings.RABBITMQ_HOST,
+                port=settings.RABBITMQ_PORT,
+                login=settings.RABBITMQ_USER,
+                password=settings.RABBITMQ_PASSWORD,
+            )
+            break
+        except Exception as exc:
+            logger.warning('Worker RabbitMQ connection attempt %s/%s failed: %s', attempt, max_retries, exc)
+            if attempt == max_retries:
+                logger.error('Worker failed to connect to RabbitMQ after %s attempts', max_retries)
+                raise
+            await asyncio.sleep(min(base_delay * attempt, 10.0))
 
     async with connection:
         channel = await connection.channel()
